@@ -454,3 +454,202 @@ void printWEB(EthernetClient &client, char Version[5]) {
   client.println("    </body>");
   client.println("</html>");
 }
+
+/************************************************************
+** changeCfg()
+**
+** Called when a new network parameter is sent via POST
+** (ip=... or subnet=...).
+**
+** Task:
+**  - Read the transmitted string
+**  - Convert it into an IPAddress object
+**  - Call updtCfg() to store it in EEPROM
+************************************************************/
+void Cfg::change(EthernetClient &client, int i) {
+  //
+  // i = 0 → change IP address
+  // i = 1 → change subnet
+  //
+  int cl = 4;
+  int clw = 0;
+  int cache[cl] = { 0, 0, 0, 0 };
+
+  int y = readString.indexOf("=") + 1; // Read the relevant part of the string, e.g. "ip=192.168.1.10"
+  int length = readString.indexOf(' ', y - 1) + 1;
+
+  for (y; y < length; y++) { 
+    if (readString[y] == '.' || readString[y] == ' ') { // Assemble new IP address
+      if (i == 0) {
+        temp.ip[clw] = (byte)cache[clw];
+        //SerialUSB.println(temp.ip);
+      } else if (i == 1) {
+        temp.subnet[clw] = (byte)cache[clw];
+        //SerialUSB.println(temp.subnet);
+      } else if (i == 2) {
+        temp.gateway[clw] = (byte)cache[clw];
+        //SerialUSB.println(temp.gateway);
+      }
+      clw++;
+    } else { // Split IP string into individual numbers
+      SerialUSB.print(readString[y]);
+      SerialUSB.print(" ");
+      int a = readString[y] - '0';
+      SerialUSB.print(a);
+      SerialUSB.print(" ");
+      cache[clw] = (cache[clw] * 10) + a;
+      SerialUSB.println(cache[clw]);
+    }
+    if (y >= readString.length()) break;
+  }
+
+  //SerialUSB.println(temp.ip);
+  //SerialUSB.println(temp.subnet);
+  //SerialUSB.println(temp.gateway);
+
+  chnge++;
+  if (chnge == 2) { // When both IP & subnet have been received → update configuration
+    SerialUSB.println("updateCfg");
+    config.updte(client, temp, mac); // Update values
+    //SerialUSB.println(standart.ip);
+    chnge = 0;
+  }
+}
+
+/************************************************************
+** updtCfg()
+**
+** Writes new IP, subnet, and gateway data to EEPROM
+** and reinitializes the MKR Zero so the new parameters
+** are active on the next startup.
+************************************************************/
+void Cfg::updte(EthernetClient &client, IPS &temp, byte mac[6]) {
+  client.stop();
+
+  //SerialUSB.println(temp.ip);
+  //SerialUSB.println(temp.subnet);
+  //SerialUSB.println(temp.gateway);
+
+  Ethernet.begin(mac, temp.ip, temp.gateway, temp.subnet);
+  server.begin();
+
+  if (Ethernet.linkStatus() == Unknown) {
+    SerialUSB.println("Link status unknown. Link status detection is only available with W5200 and W5500.");
+  } else if (Ethernet.linkStatus() == LinkON) {
+    SerialUSB.println("Link status: On");
+  } else if (Ethernet.linkStatus() == LinkOFF) {
+    SerialUSB.println("Link status: Off");
+  }
+
+  int aE = 0;
+
+  if (temp.ip != standart.ip) {
+    EEPROM.put(aE, temp.ip); // Store IP
+    SerialUSB.println("ip written");
+  }
+  aE += sizeof(temp.ip);
+
+  if (temp.subnet != standart.subnet) {
+    EEPROM.put(aE, temp.subnet); // Store subnet
+    SerialUSB.println("subnet written");
+  }
+  aE += sizeof(temp.subnet);
+
+  if (temp.gateway != standart.gateway) {
+    EEPROM.put(aE, temp.gateway); // Store gateway
+    SerialUSB.println("gateway written");
+  }
+
+  EEPROM.commit(); // Commit changes
+
+  //IPS* prt;
+  IPS* prt = new IPS;
+
+  EEPROM.get(0, prt->ip);
+  SerialUSB.print("EEPROM written: ");
+  //SerialUSB.println(prt.ip);
+
+  memcpy(standart.ip, temp.ip, 4);
+  memcpy(standart.subnet, temp.subnet, 4);
+  memcpy(standart.gateway, temp.gateway, 4);
+}
+
+/************************************************************
+** resetConfig()
+**
+** Checked during setup().
+** If button 1 AND button 2 are pressed, the controller
+** clears the EEPROM and writes default values on the next start.
+************************************************************/
+int Cfg::reset() {
+  if (resetq == 1) {
+    long time = millis() + 500;
+    int i = 0;
+
+    while (millis() < time) {
+      if (digitalRead(button.pin[0]) == HIGH && digitalRead(button.pin[1]) == HIGH) {
+        SerialUSB.println("both pressed");
+        i = 1;
+      } else {
+        SerialUSB.println("not both pressed");
+        i = 0;
+        break;
+      }
+    }
+
+    digitalWrite(relay.pin[5], HIGH);
+    delay(1000);
+
+    while (digitalRead(button.pin[0]) == HIGH && digitalRead(button.pin[1]) == HIGH)
+      ;
+
+    digitalWrite(relay.pin[5], LOW);
+    delay(1000);
+
+    time = millis() + 500;
+    while (millis() < time) {
+      if (digitalRead(button.pin[0]) == HIGH && digitalRead(button.pin[1]) == HIGH) {
+        SerialUSB.println("both pressed");
+        i = 1;
+      } else {
+        SerialUSB.println("not both pressed");
+        i = 0;
+        break;
+      }
+    }
+
+    if (i == 1) {
+      SerialUSB.println("resetting Config");
+      for (int i = 0; i < 10; i++) {
+        digitalWrite(relay.pin[5], HIGH);
+        delay(50);
+        digitalWrite(relay.pin[5], LOW);
+        delay(50);
+      }
+      return 1; // Signal: rewrite default values
+    } else {
+      return 0; // No reset
+    }
+  } else {
+    return 0; // No reset
+  }
+}
+
+/************************************************************
+** Sends JSON with relay states to the web page
+** → queried every second via AJAX
+************************************************************/
+void sendStatus(EthernetClient &client) {
+  client.println("HTTP/1.1 200 OK");
+  client.println("Content-Type: application/json");
+  client.println("Connection: close");
+  client.println();
+  client.print("{\"relayStates\":[");
+  for (int i = 0; i < 6; i++) {
+    client.print(relay.state[i] ? "true" : "false");
+    if (i < 5) client.print(",");
+  }
+  client.println("]}");
+  client.stop();
+}
+

@@ -3,11 +3,11 @@
 
 
 /*******************************************************
-* Funktionen
+* FUNCTIONS
 *******************************************************/
 
 /************************************************************
-** Tastererkennung + Entprellung                         
+** keypress and debouncing                      
 ************************************************************/
 void Button::detect(Relay& relay) {
   for (int i = 0; i < 6; i++) {
@@ -27,7 +27,7 @@ void Button::detect(Relay& relay) {
 }
 
 /************************************************************
-** Überträgt relaystate[] auf die tatsächlichen Pins      
+** applies relaystates[] to the outout pins    
 ************************************************************/
 void Relay::power() {
   for (int i = 0; i < 6; i++) {
@@ -36,7 +36,7 @@ void Relay::power() {
 }
 
 /************************************************************
-** Umschalten eines einzelnen Relais per Web             
+** toggle a relais 
 ************************************************************/
 void Relay::toggle(EthernetClient &client, int i) {
   relay.state[i] = !relay.state[i];  // Zustand invertieren
@@ -650,4 +650,5 @@ void sendStatus(EthernetClient &client) {
   }
   client.println("]}");
   client.stop();
+
 }
